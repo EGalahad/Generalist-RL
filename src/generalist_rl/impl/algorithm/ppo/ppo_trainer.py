@@ -11,12 +11,12 @@ import torch.nn.functional as F
 
 class PPOTrainer(PyTorchTrainer):
     policy: ActorCriticPolicy
-    def __init__(self, policy: ActorCriticPolicy, lr_actor=3e-4, lr_critic=1e-4, weight_decay=0.0, **kwargs):
+    def __init__(self, policy: ActorCriticPolicy, lr_actor=3e-4, lr_critic=1e-3, weight_decay=0.0, **kwargs):
         super().__init__(policy)
         self.optimizer = torch.optim.Adam(
             [
                 {"params": self.policy.net.actor.parameters(), "lr": lr_actor},
-                {"params": self.policy.net.critic.parameters(), "lr": lr_critic, "weight_decay": weight_decay}
+                {"params": self.policy.net.critic.parameters(), "lr": lr_critic}
             ]
         )
     
@@ -24,11 +24,13 @@ class PPOTrainer(PyTorchTrainer):
         self.ppo_clip = kwargs.get("ppo_clip", 0.2)
         self.critic_loss_weight = kwargs.get("critic_loss_weight", 0.5)
         self.entropy_loss_weight = kwargs.get("entropy_loss_weight", 0.01)
+        self.gamma = kwargs.get("gamma", 0.99)
+        self.lamda = kwargs.get("lamda", 0.95)
             
     def step(self, samples: SampleBatch) -> TrainerStepResult:
         rollout_analyzed_result: PPORolloutAnalyzedResult = samples.analyzed_result
 
-        returns, advantages = compute_returns_gae(samples)
+        returns, advantages = compute_returns_gae(samples, gamma=self.gamma, lamda=self.lamda)
         # breakpoint()
 
         returns = returns.detach()
@@ -46,6 +48,10 @@ class PPOTrainer(PyTorchTrainer):
             actor_loss = -torch.mean(torch.min(surrogate1, surrogate2))
             critic_loss = F.mse_loss(trainer_analyzed_result.state_values, returns)
             entropy_loss = -torch.mean(trainer_analyzed_result.policy_entropy)
+            
+            # first_done = torch.where(samples.done)[0][0]
+            # print("returns: ", returns[:first_done+1, 0, 0])
+            # print("state_values: ", trainer_analyzed_result.state_values[:first_done+1, 0, 0])
             
             loss = actor_loss + self.critic_loss_weight * critic_loss + self.entropy_loss_weight * entropy_loss
             self.optimizer.zero_grad()

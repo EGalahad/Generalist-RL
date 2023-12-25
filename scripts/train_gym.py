@@ -9,7 +9,6 @@ from generalist_rl.impl.algorithm.ppo import (
 from generalist_rl.utils.logging import get_logging_str_from_dict
 
 import torch
-import numpy as np
 import tqdm
 import os
 import wandb
@@ -21,7 +20,6 @@ def main():
     wandb.init(project="generalist-rl")
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     num_steps_per_env = 500
-    total_iterations = 1000
     update_interval = 4
     log_interval = 10
 
@@ -57,7 +55,7 @@ def main():
         has_continuous_action_space=has_continuous_action_space,
     )
 
-    trainer = PPOTrainer(policy)
+    trainer = PPOTrainer(policy, lr_actor=3e-4, lr_critic=1e-3)
 
     episode_return_buffer = deque(maxlen=100)
     episode_length_buffer = deque(maxlen=100)
@@ -69,7 +67,6 @@ def main():
     update_timesteps = num_steps_per_env * update_interval
     log_timesteps = num_steps_per_env * log_interval
     timesteps = 0
-    transition = SampleBatch()
     pbar = tqdm.tqdm(range(total_timesteps))
     while timesteps < total_timesteps:
         episode_return[:] = 0
@@ -77,8 +74,9 @@ def main():
         env_step_result = env.reset()
 
         # rollout
-        # policy.eval_mode()
+        policy.eval_mode()
         for step in range(num_steps_per_env):
+            transition = SampleBatch()
             timesteps += 1
 
             transition.obs = env_step_result.obs
@@ -93,9 +91,6 @@ def main():
             transition.analyzed_result = rollout_result.analyzed_result
             transition.reward = env_step_result.reward
             transition.done = env_step_result.done
-
-            # if step == num_steps_per_env - 1:
-            #     transition.truncated = torch.ones(1, dtype=torch.bool)
 
             buffer.put(transition)
 
@@ -116,9 +111,7 @@ def main():
 
         # train
         if timesteps % update_timesteps == 0:
-            # if torch.mean(torch.tensor(episode_return_buffer)) > 100:
-            #     breakpoint()
-            # policy.train_mode()
+            policy.train_mode()
             samples = buffer.get()
             buffer.clear()
             trainer_step_result = trainer.step(samples)
@@ -146,7 +139,6 @@ def main():
                 if key not in stats:
                     stats[key] = []
                 stats[key].append(trainer_step_result.stats[key])
-
 
     # initial_iteration = policy.version + 1
     # pbar = tqdm.tqdm(range(initial_iteration, initial_iteration + total_iterations))
