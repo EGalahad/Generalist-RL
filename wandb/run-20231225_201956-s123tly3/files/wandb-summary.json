@@ -1,0 +1,1 @@
+{"loss": 62.05499267578125, "actor_loss": -0.008890852332115173, "critic_loss": 124.13789367675781, "entropy_loss": -0.506306529045105, "reward": 1.0, "step": 99, "timesteps": 200000, "mean_return": 381.0799865722656, "mean_length": 381.0799865722656, "_timestamp": 1703506892.112316, "_runtime": 95.19902300834656, "_step": 39, "_wandb": {"runtime": 90}}
