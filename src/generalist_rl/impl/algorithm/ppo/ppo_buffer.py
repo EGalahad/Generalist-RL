@@ -5,41 +5,25 @@ from .ppo_datatypes import PPORolloutAnalyzedResult
 
 import torch
 import numpy as np
+from generalist_rl.utils.namedarray import recursive_aggregate
 
-class PPOBufferList(Buffer):
-    def __init__(self):
-        self.states = []
-
-        self.actions = []
-        self.logprobs = []
-        self.state_values = []
-
-        self.rewards = []
-        self.is_terminals = []
+class BufferNamedArray(Buffer):
+    def __init__(self, **kwargs):
+        self.transitions = []
     
     def qsize(self) -> int:
-        return len(self.states)
+        return len(self.transitions)
     
     def put(self, sample: SampleBatch):
-        self.states.append(sample.obs['obs'])
-        # self.policy_states.append(item.policy_state)
-
-        self.actions.append(sample.action.x)
-        self.logprobs.append(sample.analyzed_result.action_logprobs)
-        self.state_values.append(sample.analyzed_result.state_values)
-
-        self.rewards.append(sample.reward)
-        self.is_terminals.append(sample.done)
-
+        self.transitions.append(sample)
+        
     def clear(self):
-        del self.states[:]
-
-        del self.actions[:]
-        del self.logprobs[:]
-        del self.state_values[:]
-
-        del self.rewards[:]
-        del self.is_terminals[:]
+        del self.transitions[:]
+        
+    def get(self) -> SampleBatch:
+        samples = recursive_aggregate(self.transitions, torch.stack)
+        # samples.truncated[-1, ...] = True
+        return samples
 
 
 class PPOBufferTensorGPU(Buffer):
@@ -105,6 +89,7 @@ class PPOBufferTensorGPU(Buffer):
         for key in old_obs.keys():
             if old_obs[key] is not None:
                 self.obs[key] = torch.zeros_like(old_obs[key])
+        del old_obs
         # self.policy_states = torch.zeros_like(self.policy_states)
 
         self.actions = torch.zeros_like(self.actions)

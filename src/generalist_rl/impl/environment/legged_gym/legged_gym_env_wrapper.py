@@ -30,12 +30,11 @@ class LeggedGymEnv(Environment):
         For environments that are reset, will return done=True and the observation of the start of the next episode.
         """
         obs, privileged_obs = self._env.reset()
-        critic_obs = privileged_obs if privileged_obs is not None else obs
         obs_dict = {
             "obs": obs,
-            "critic_obs": critic_obs,
+            "critic_obs": privileged_obs,
         }
-        return EnvStepResult(obs=obs_dict, reward=None, done=torch.ones(self.num_envs, dtype=torch.bool), info=None)
+        return EnvStepResult(obs=obs_dict, reward=None, done=None, truncated=None, info=None)
     
     def step(self, action: Action) -> EnvStepResult:
         """Take a step in the environment.
@@ -43,9 +42,13 @@ class LeggedGymEnv(Environment):
         For vectorized environments, will step all environments in parallel.
         """
         obs, privileged_obs, reward, done, extras = self._env.step(action.x)
-        truncated = extras.pop('time_outs').unsqueeze(-1) if 'time_outs' in extras else None
+        truncated = extras.pop('time_outs').unsqueeze(-1) \
+            if 'time_outs' in extras \
+                else torch.zeros((self.num_envs, 1), dtype=torch.bool, device=obs.device)
+        # for legged gym environment, if the step is truncated, then both done and truncate will be true. but our logic will be that if the step is truncated, then the episode is not done.
+        done = done.unsqueeze(-1).logical_and(~truncated)
         obs_dict = {
             "obs": obs,
             "critic_obs": privileged_obs,
         }
-        return EnvStepResult(obs=obs_dict, reward=reward.unsqueeze(-1), done=done.unsqueeze(-1), info=extras, truncated=truncated)
+        return EnvStepResult(obs=obs_dict, reward=reward.unsqueeze(-1), done=done, truncated=truncated, info=extras)

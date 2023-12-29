@@ -1,8 +1,13 @@
 from generalist_rl.api.datatypes import SampleBatch, RolloutRequest
 
 from generalist_rl.impl.environment.legged_gym import LeggedGymEnv, get_args
-from generalist_rl.impl.algorithm.ppo import PPOBufferTensorGPU, ActorCriticPolicy, PPOTrainer
+from generalist_rl.impl.algorithm.ppo import (
+    BufferNamedArray,
+    ActorCriticPolicy,
+    PPOTrainer,
+)
 from generalist_rl.utils.logging import get_logging_str_from_dict
+from generalist_rl.utils.namedarray import from_dict
 
 import torch
 import tqdm
@@ -12,90 +17,175 @@ from collections import deque
 
 
 def main():
-    # wandb.init(project="generalist-rl")
-    device = torch.device('cuda')
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    total_timesteps = int(1e4)
+    num_steps_per_env = 25
+    update_interval = 1
+    log_interval = 1
+
+    lr_actor = 3e-4
+    lr_critic = 1e-3
+    critic_loss_weight = 1.0
+    entropy_loss_weight = 0.001
+    ppo_epochs = 5
+    gamma = 0.99
+    lamda = 0.95
+    num_minibatch = 4
+    shuffle = True
+
     args = get_args()
     env = LeggedGymEnv(args)
+    has_continuous_action_space = True
+    action_std_init = 1.0
 
-    num_steps_per_env = 25
+    policy = ActorCriticPolicy(
+        env.num_obs,
+        env.num_actions,
+        has_continuous_action_space=has_continuous_action_space,
+        action_std_init=action_std_init,
+        device=device,
+    )
 
-    policy = ActorCriticPolicy(env.num_obs, env.num_actions, has_continuous_action_space=True, action_std_init=0.6, device=device)
-    # load ckpt if exists
     if os.path.exists("policy.pth"):
         policy_ckpt = torch.load("policy.pth")
         policy.load_checkpoint(policy_ckpt)
         print(f"loaded policy ckpt")
-    buffer = PPOBufferTensorGPU(env.num_envs, num_steps_per_env, env.num_obs, env.num_privileged_obs, env.num_actions)
-    trainer = PPOTrainer(policy, lr=0.0001, weight_decay=0.0001, entropy_loss_weight=0.0)
 
-    initial_iteration = policy.version + 1
-    total_iterations = 1500
-    log_interval = 5
-    
-    env_step_result = env.reset()
-    
-    transition = SampleBatch()
+    buffer = BufferNamedArray(
+        num_envs=env.num_envs,
+        num_transitions_per_env=num_steps_per_env * update_interval,
+        num_obs=env.num_obs,
+        num_privileged_obs=env.num_privileged_obs,
+        num_action=env.num_actions,
+        has_continuous_action_space=has_continuous_action_space,
+    )
 
+    trainer = PPOTrainer(
+        policy,
+        lr_actor=lr_actor,
+        lr_critic=lr_critic,
+        ppo_epochs=ppo_epochs,
+        critic_loss_weight=critic_loss_weight,
+        entropy_loss_weight=entropy_loss_weight,
+        gamma=gamma,
+        lamda=lamda,
+        num_minibatch=num_minibatch,
+        shuffle=shuffle,
+    )
+
+    wandb.init(
+        project="generalist-rl",
+        job_type="legged_gym",
+        config={
+            "total_timesteps": total_timesteps,
+            "num_steps_per_env": num_steps_per_env,
+            "update_interval": update_interval,
+            "log_interval": log_interval,
+            "num_envs": env.num_envs,
+            "env_args": args,
+            "policy_args": {
+                "has_continuous_action_space": has_continuous_action_space,
+                "action_std_init": action_std_init,
+            },
+            "trainer_args": {
+                "lr_actor": lr_actor,
+                "lr_critic": lr_critic,
+                "ppo_epochs": ppo_epochs,
+                "critic_loss_weight": critic_loss_weight,
+                "entropy_loss_weight": entropy_loss_weight,
+                "gamma": gamma,
+                "lamda": lamda,
+                "num_minibatch": num_minibatch,
+                "shuffle": shuffle,
+                
+            },
+        },
+    )
     episode_return_buffer = deque(maxlen=100)
     episode_length_buffer = deque(maxlen=100)
-    cur_return = torch.zeros((env.num_envs, 1), dtype=torch.float32, device=device)
-    cur_length = torch.zeros(env.num_envs, dtype=torch.float32, device=device)
-    
-    
-    pbar = tqdm.tqdm(range(initial_iteration, initial_iteration + total_iterations))
-    for epoch in range(initial_iteration, initial_iteration + total_iterations):
+    episode_return = torch.zeros((env.num_envs, 1), dtype=torch.float32, device=device)
+    episode_length = torch.zeros(env.num_envs, dtype=torch.float32, device=device)
+
+    stats = {}
+    update_timesteps = num_steps_per_env * update_interval
+    log_timesteps = num_steps_per_env * log_interval
+    timesteps = 0
+    # pbar = tqdm.tqdm(range(total_timesteps))
+    env_step_result = env.reset()
+    while timesteps < total_timesteps:
         # rollout
         policy.eval_mode()
         for step in range(num_steps_per_env):
-            obs, critic_obs = env_step_result.obs['obs'], env_step_result.obs['critic_obs']
-            transition.obs = {
-                "obs": obs,
-                "critic_obs": critic_obs
-            }
+            transition = SampleBatch()
+            timesteps += 1
+
+            transition.obs = from_dict(env_step_result.obs)
             transition.policy_state = None
 
-            rollout_result = policy.rollout(RolloutRequest(obs={'obs': obs}))
+            request = RolloutRequest(obs=from_dict(env_step_result.obs))
+            rollout_result = policy.rollout(requests=request)
+            env_step_result = env.step(rollout_result.action)
 
             transition.action = rollout_result.action
             transition.analyzed_result = rollout_result.analyzed_result
-            
-            env_step_result = env.step(rollout_result.action)
-            
             transition.reward = env_step_result.reward
             transition.done = env_step_result.done
-            
-            if step == num_steps_per_env - 1:
-                transition.truncated = torch.ones(1, dtype=torch.bool)
-            
+            transition.truncated = env_step_result.truncated
+
             buffer.put(transition)
 
-            cur_return += env_step_result.reward
-            cur_length += 1
-            reset_ids = torch.where(env_step_result.done)[0]
-            episode_return_buffer.extend(cur_return[reset_ids].cpu().numpy().tolist())
-            episode_length_buffer.extend(cur_length[reset_ids].cpu().numpy().tolist())
-            cur_return[reset_ids] = 0
-            cur_length[reset_ids] = 0
-            
-        # train
-        policy.train_mode()
-        samples = buffer.get()
-        buffer.clear()
-        trainer_step_result = trainer.step(samples)
-        policy.inc_version()
+            # update episode return and length
+            episode_return += env_step_result.reward
+            episode_length += 1
+            reset_ids = torch.where(
+                torch.logical_or(transition.done, transition.truncated)
+            )[0]
+            episode_return_buffer.extend(
+                episode_return[reset_ids].cpu().numpy().tolist()
+            )
+            episode_length_buffer.extend(
+                episode_length[reset_ids].cpu().numpy().tolist()
+            )
+            episode_return[reset_ids] = 0
+            episode_length[reset_ids] = 0
 
-        trainer_step_result.stats.update({ "step": trainer_step_result.step })
-        # wandb.log(trainer_step_result.stats)
-        if epoch % log_interval == 0:
+        # train
+        if timesteps % update_timesteps == 0:
+            policy.train_mode()
+            samples = buffer.get()
+            buffer.clear()
+            # if timesteps // update_timesteps >= 30:
+            #     breakpoint()
+            trainer_step_result = trainer.step(samples)
+            trainer_step_result.stats.update(
+                {
+                    "step": trainer_step_result.step,
+                    "timesteps": timesteps,
+                    "mean_return": torch.mean(
+                        torch.tensor(episode_return_buffer)
+                    ).item(),
+                    "mean_length": torch.mean(
+                        torch.tensor(episode_length_buffer)
+                    ).item(),
+                }
+            )
+            wandb.log(trainer_step_result.stats)
+
+        if timesteps % log_timesteps == 0:
             logging_str = get_logging_str_from_dict(trainer_step_result.stats)
             print(logging_str)
-        pbar.update(1)
-        pbar.set_description(f"step: {epoch}, mean_return: {torch.mean(torch.tensor(episode_return_buffer)):.4f}, mean_length: {torch.mean(torch.tensor(episode_length_buffer)):.4f}")
 
-    
-    policy_ckpt = policy.get_checkpoint()
-    torch.save(policy_ckpt, "policy.pth")
-            
+            # pbar.update(log_timesteps)
+            # pbar.set_description(
+            #     f"step: {timesteps}, mean_return: {torch.mean(torch.tensor(episode_return_buffer)):.4f}, mean_length: {torch.mean(torch.tensor(episode_length_buffer)):.4f}"
+            # )
 
-if __name__ == '__main__':
+            # record stats
+            for key in trainer_step_result.stats.keys():
+                if key not in stats:
+                    stats[key] = []
+                stats[key].append(trainer_step_result.stats[key])
+
+
+if __name__ == "__main__":
     main()

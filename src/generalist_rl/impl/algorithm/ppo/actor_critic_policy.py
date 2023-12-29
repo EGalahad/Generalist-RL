@@ -8,25 +8,25 @@ import torch.nn as nn
 from torch.distributions import Categorical, MultivariateNormal
 
 class ActorCriticNet(nn.Module):
-    def __init__(self, num_obs, num_actions, has_continuous_action_space, action_std_init, device):
+    def __init__(self, num_obs, num_actions, has_continuous_action_space, action_std_init=0.6):
         super(ActorCriticNet, self).__init__()
 
         self.has_continuous_action_space = has_continuous_action_space
         
         if has_continuous_action_space:
             self.action_dim = num_actions
-            self.action_var = nn.Parameter(torch.full((num_actions,), action_std_init * action_std_init, device=device))
+            self.action_var = nn.Parameter(torch.full((num_actions,), action_std_init * action_std_init))
         # actor
         if has_continuous_action_space:
             self.actor = nn.Sequential(
                             nn.Linear(num_obs, 128),
-                            nn.Tanh(),
+                            nn.ELU(),
                             nn.Linear(128, 64),
-                            nn.Tanh(),
+                            nn.ELU(),
                             nn.Linear(64, 32),
-                            nn.Tanh(),
+                            nn.ELU(),
                             nn.Linear(32, num_actions),
-                            nn.Tanh()
+                            # nn.Tanh()
                         )
         else:
             self.actor = nn.Sequential(
@@ -41,11 +41,11 @@ class ActorCriticNet(nn.Module):
 
         # critic
         self.critic = nn.Sequential(nn.Linear(num_obs, 128),
-                        nn.Tanh(),
+                        nn.ELU(),
                         nn.Linear(128, 64),
-                        nn.Tanh(),
+                        nn.ELU(),
                         nn.Linear(64, 32),
-                        nn.Tanh(),
+                        nn.ELU(),
                         nn.Linear(32, 1)
                 )
 
@@ -80,114 +80,12 @@ class ActorCriticNet(nn.Module):
             action_probs = self.actor(obs)
             self.distribution = Categorical(action_probs)
 
-# class ActorCriticNet(nn.Module):
-#     def __init__(
-#         self,
-#         state_dim,
-#         action_dim,
-#         has_continuous_action_space,
-#         action_std_init,
-#         device,
-#         **kwargs,
-#     ):
-#         super(ActorCriticNet, self).__init__()
-
-#         self.device = device
-#         self.has_continuous_action_space = has_continuous_action_space
-
-#         if has_continuous_action_space:
-#             self.action_dim = action_dim
-#             self.action_var = torch.full(
-#                 (action_dim,), action_std_init * action_std_init
-#             ).to(device)
-#         # actor
-#         if has_continuous_action_space:
-#             self.actor = nn.Sequential(
-#                 nn.Linear(state_dim, 64),
-#                 nn.Tanh(),
-#                 nn.Linear(64, 64),
-#                 nn.Tanh(),
-#                 nn.Linear(64, action_dim),
-#                 nn.Tanh(),
-#             )
-#         else:
-#             self.actor = nn.Sequential(
-#                 nn.Linear(state_dim, 64),
-#                 nn.Tanh(),
-#                 nn.Linear(64, 64),
-#                 nn.Tanh(),
-#                 nn.Linear(64, action_dim),
-#                 nn.Softmax(dim=-1),
-#             )
-#         # critic
-#         self.critic = nn.Sequential(
-#             nn.Linear(state_dim, 64),
-#             nn.Tanh(),
-#             nn.Linear(64, 64),
-#             nn.Tanh(),
-#             nn.Linear(64, 1),
-#         )
-
-#     def set_action_std(self, new_action_std):
-#         if self.has_continuous_action_space:
-#             self.action_var = torch.full(
-#                 (self.action_dim,), new_action_std * new_action_std
-#             ).to(self.device)
-#         else:
-#             print(
-#                 "--------------------------------------------------------------------------------------------"
-#             )
-#             print(
-#                 "WARNING : Calling ActorCritic::set_action_std() on discrete action space policy"
-#             )
-#             print(
-#                 "--------------------------------------------------------------------------------------------"
-#             )
-
-#     def forward(self):
-#         raise NotImplementedError
-
-#     def act(self, state):
-#         if self.has_continuous_action_space:
-#             action_mean = self.actor(state)
-#             cov_mat = torch.diag(self.action_var).unsqueeze(dim=0)
-#             dist = MultivariateNormal(action_mean, cov_mat)
-#         else:
-#             action_probs = self.actor(state)
-#             dist = Categorical(action_probs)
-
-#         action = dist.sample()
-#         action_logprob = dist.log_prob(action)
-#         state_val = self.critic(state)
-
-#         return action.detach(), action_logprob.unsqueeze(-1).detach(), state_val.detach()
-
-#     def evaluate(self, state, action):
-#         if self.has_continuous_action_space:
-#             action_mean = self.actor(state)
-
-#             action_var = self.action_var.expand_as(action_mean)
-#             cov_mat = torch.diag_embed(action_var).to(self.device)
-#             dist = MultivariateNormal(action_mean, cov_mat)
-
-#             # For Single Action Environments.
-#             if self.action_dim == 1:
-#                 action = action.reshape(-1, self.action_dim)
-#         else:
-#             action_probs = self.actor(state)
-#             dist = Categorical(action_probs)
-#         action_logprobs = dist.log_prob(action)
-#         dist_entropy = dist.entropy()
-#         state_values = self.critic(state)
-
-#         return action_logprobs.unsqueeze(-1), state_values, dist_entropy.unsqueeze(-1)
-
 
 class ActorCriticPolicy(SingleModelPytorchPolicy):
     net: ActorCriticNet
-    def __init__(self, num_obs, num_actions, has_continuous_action_space, action_std_init, device):
+    def __init__(self, num_obs, num_actions, has_continuous_action_space, action_std_init=None, device=None):
         self._device = device
-        net = ActorCriticNet(num_obs, num_actions, has_continuous_action_space, action_std_init, device)
+        net = ActorCriticNet(num_obs, num_actions, has_continuous_action_space, action_std_init)
         super(ActorCriticPolicy, self).__init__(net)
     
     @property
@@ -207,7 +105,7 @@ class ActorCriticPolicy(SingleModelPytorchPolicy):
         )
     
     def analyze(self, sample: SampleBatch, **kwargs) -> PPOTrainerAnalyzedResult:
-        action_logprobs, state_values, policy_entropy = self.net.evaluate(sample.obs['obs'], sample.action)
+        action_logprobs, state_values, policy_entropy = self.net.evaluate(sample.obs['obs'], sample.action['x'])
         return PPOTrainerAnalyzedResult(
             action_logprobs=action_logprobs,
             state_values=state_values,

@@ -1,22 +1,33 @@
 from generalist_rl.api.datatypes import AnalyzedResult
 
-import dataclasses
 import torch
 
-@dataclasses.dataclass
+
 class PPORolloutAnalyzedResult(AnalyzedResult):
-    # policy.rollout()
-    action_logprobs: torch.Tensor
-    state_values: torch.Tensor
-    
-    # # compute in trainer
-    # advantages: torch.Tensor = None
-    # returns: torch.Tensor = None
+    def __init__(
+        self,
+        action_logprobs: torch.Tensor,
+        state_values: torch.Tensor,
+        returns: torch.Tensor = None,
+        advantages: torch.Tensor = None,
+    ):
+        super().__init__(
+            action_logprobs=action_logprobs,
+            state_values=state_values,
+            returns=returns,
+            advantages=advantages,
+        )
 
 
-@dataclasses.dataclass
 class PPOTrainerAnalyzedResult(AnalyzedResult):
-    # policy.analyze()
-    action_logprobs: torch.Tensor
-    state_values: torch.Tensor
-    policy_entropy: torch.Tensor
+    def __init__(
+        self,
+        action_logprobs: torch.Tensor,
+        state_values: torch.Tensor,
+        policy_entropy: torch.Tensor,
+    ):
+        super().__init__(
+            action_logprobs=action_logprobs,
+            state_values=state_values,
+            policy_entropy=policy_entropy,
+        )

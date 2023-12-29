@@ -1,8 +1,10 @@
 import dataclasses
 from typing import Dict, Union
 
+from generalist_rl.utils.namedarray import NamedArray
 import torch
 import numpy as np
+
 
 # actor to policy
 class PolicyState:
@@ -11,39 +13,48 @@ class PolicyState:
 
 @dataclasses.dataclass
 class RolloutRequest:
-    obs: Dict
+    obs: NamedArray
     policy_state: PolicyState = None
+
 
 # policy to actor
-@dataclasses.dataclass
-class Action:
-    x: Union[torch.Tensor, np.ndarray]
+class Action(NamedArray):
+    def __init__(self, x: Union[torch.Tensor, np.ndarray]):
+        super(Action, self).__init__(x=x)
 
 
-class AnalyzedResult:
-    pass
+AnalyzedResult = NamedArray
 
 
-@dataclasses.dataclass
-class RolloutResult:
-    action: Action
-    policy_state: PolicyState = None
-    analyzed_result: AnalyzedResult = None
+class RolloutResult(NamedArray):
+    def __init__(
+        self,
+        action: Action,
+        analyzed_result: AnalyzedResult = None,
+    ):
+        super(RolloutResult, self).__init__(
+            action=action,
+            analyzed_result=analyzed_result,
+        )
 
 # actor to trainer
-@dataclasses.dataclass
-class SampleBatch:
-    obs: Dict = None
-    policy_state: PolicyState = None
-    
-    action: Union[torch.Tensor, np.ndarray] = None
-    analyzed_result: AnalyzedResult = None
-
-    reward: Union[torch.Tensor, np.ndarray] = None
-    done: Union[torch.Tensor, np.ndarray] = None
-    
-    truncated: Union[torch.Tensor, np.ndarray] = None
-    
-    def __post_init__(self):
-        if self.truncated is None:
-            self.truncated = torch.zeros(1, dtype=torch.bool)
+class SampleBatch(NamedArray):
+    def __init__(
+        self,
+        obs: NamedArray = None,
+        policy_state: PolicyState = None,
+        action: Action = None,
+        analyzed_result: AnalyzedResult = None,
+        reward: Union[torch.Tensor, np.ndarray] = None,
+        done: Union[torch.Tensor, np.ndarray] = None,
+        truncated: Union[torch.Tensor, np.ndarray] = None,
+    ):
+        super(SampleBatch, self).__init__(
+            obs=obs,
+            policy_state=policy_state,
+            action=action,
+            analyzed_result=analyzed_result,
+            reward=reward,
+            done=done,
+            truncated=truncated,
+        )

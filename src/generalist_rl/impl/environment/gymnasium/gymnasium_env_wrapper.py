@@ -48,7 +48,7 @@ class GymEnv(Environment):
         
         For vectorized environments, will step all environments in parallel.
         """
-        action_np = action.x.squeeze().cpu().numpy()
+        action_np = action.x.cpu().numpy()
         obs, reward, done, truncation, info = self._env.step(action_np)
         return EnvStepResult(
             obs=self.__get_obs_dict(obs), 
