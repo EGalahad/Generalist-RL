@@ -49,21 +49,15 @@ class PPOTrainer(PyTorchTrainer):
 
         for sample in minibatch_generator(samples, self.ppo_epochs, self.num_minibatch, self.shuffle):
             rollout_analyzed_result: PPORolloutAnalyzedResult = sample.analyzed_result
-            advantages = rollout_analyzed_result.advantages.detach()
-            returns = rollout_analyzed_result.returns.detach()
-            old_action_logprobs = rollout_analyzed_result.action_logprobs.detach()
-
             trainer_analyzed_result = self.policy.analyze(sample)
 
-            # loss_mask = ~sample.truncated
+            importance_ratio = torch.exp(trainer_analyzed_result.action_logprobs - rollout_analyzed_result.action_logprobs.detach())
 
-            importance_ratio = torch.exp(trainer_analyzed_result.action_logprobs - old_action_logprobs)
-
-            surrogate1 = importance_ratio * advantages
-            surrogate2 = torch.clamp(importance_ratio, 1 - self.ppo_clip, 1 + self.ppo_clip) * advantages
+            surrogate1 = importance_ratio * rollout_analyzed_result.advantages.detach()
+            surrogate2 = torch.clamp(importance_ratio, 1 - self.ppo_clip, 1 + self.ppo_clip) * rollout_analyzed_result.advantages.detach()
             
             actor_loss = -torch.mean(torch.min(surrogate1, surrogate2))
-            critic_loss = F.mse_loss(trainer_analyzed_result.state_values, returns)
+            critic_loss = F.mse_loss(trainer_analyzed_result.state_values, rollout_analyzed_result.returns.detach())
             entropy_loss = -torch.mean(trainer_analyzed_result.policy_entropy)
             
             loss = actor_loss + self.critic_loss_weight * critic_loss + self.entropy_loss_weight * entropy_loss
@@ -75,8 +69,8 @@ class PPOTrainer(PyTorchTrainer):
             critic_losses.append(critic_loss.item())
             actor_losses.append(actor_loss.item())
             entropy_losses.append(entropy_loss.item())
-            gae_returns.append(torch.mean(returns).item())
             rewards.append(torch.mean(sample.reward).item())
+            gae_returns.append(torch.mean(rollout_analyzed_result.returns).item())
             values.append(torch.mean(trainer_analyzed_result.state_values).item())
             
         loss_stats = {

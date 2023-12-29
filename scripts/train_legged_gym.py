@@ -23,7 +23,7 @@ def main():
     update_interval = 1
     log_interval = 1
 
-    lr_actor = 3e-4
+    lr_actor = 1e-3
     lr_critic = 1e-3
     critic_loss_weight = 1.0
     entropy_loss_weight = 0.001
