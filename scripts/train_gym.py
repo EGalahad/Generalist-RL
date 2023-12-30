@@ -3,11 +3,12 @@ from generalist_rl.api.datatypes import SampleBatch, RolloutRequest
 from generalist_rl.impl.environment.gymnasium import GymEnv
 from generalist_rl.impl.environment.gymnasium.utils import gym_eval_policy
 from generalist_rl.impl.algorithm.ppo import (
-    PPOBufferTensorGPU,
+    BufferNamedArray,
     ActorCriticPolicy,
     PPOTrainer,
 )
 from generalist_rl.utils.logging import get_logging_str_from_dict
+from generalist_rl.utils.namedarray import from_dict
 
 import torch
 import tqdm
@@ -29,13 +30,16 @@ def main():
     env_name = "Pendulum-v1"
     num_envs = 16
 
-    action_std_init = 0.6
 
     lr_actor = 3e-4
     lr_critic = 1e-3
-    ppo_epochs = 80
     critic_loss_weight = 1.0
     entropy_loss_weight = 0.01
+    ppo_epochs = 80
+    gamma = 0.99
+    lamda = 0.95
+    num_minibatch = 1
+    shuffle = False
     
     env = GymEnv(
         env_name=env_name,
@@ -45,6 +49,7 @@ def main():
         device=device,
     )
     has_continuous_action_space = isinstance(env._env.action_space, gym.spaces.Box)
+    action_std_init = 0.6
 
     policy = ActorCriticPolicy(
         env.num_obs,
@@ -59,13 +64,12 @@ def main():
         policy.load_checkpoint(policy_ckpt)
         print(f"loaded policy ckpt")
 
-    buffer = PPOBufferTensorGPU(
-        env.num_envs,
-        num_steps_per_env * update_interval,
-        env.num_obs,
-        env.num_privileged_obs,
-        env.num_actions,
-        device=device,
+    buffer = BufferNamedArray(
+        num_envs=env.num_envs,
+        num_transitions_per_env=num_steps_per_env * update_interval,
+        num_obs=env.num_obs,
+        num_privileged_obs=env.num_privileged_obs,
+        num_action=env.num_actions,
         has_continuous_action_space=has_continuous_action_space,
     )
 
@@ -76,6 +80,10 @@ def main():
         ppo_epochs=ppo_epochs,
         critic_loss_weight=critic_loss_weight,
         entropy_loss_weight=entropy_loss_weight,
+        gamma=gamma,
+        lamda=lamda,
+        num_minibatch=num_minibatch,
+        shuffle=shuffle,
     )
 
     wandb.init(
@@ -115,7 +123,6 @@ def main():
     update_timesteps = num_steps_per_env * update_interval
     log_timesteps = num_steps_per_env * log_interval
     timesteps = 0
-    pbar = tqdm.tqdm(range(total_timesteps))
     env_step_result = env.reset()
     while timesteps < total_timesteps:
         # rollout
@@ -124,10 +131,10 @@ def main():
             transition = SampleBatch()
             timesteps += 1
 
-            transition.obs = env_step_result.obs
+            transition.obs = from_dict(env_step_result.obs)
             transition.policy_state = None
 
-            request = RolloutRequest(obs=env_step_result.obs)
+            request = RolloutRequest(obs=from_dict(env_step_result.obs))
             rollout_result = policy.rollout(requests=request)
             env_step_result = env.step(rollout_result.action)
 
@@ -158,27 +165,21 @@ def main():
             samples = buffer.get()
             buffer.clear()
             trainer_step_result = trainer.step(samples)
-            for i in range(num_envs):
-                print(torch.nonzero(torch.logical_or(samples.done[:, i, 0], samples.truncated[:, i, 0])).cpu().numpy().tolist())
-
-        if timesteps % log_timesteps == 0:
+            # for i in range(num_envs):
+            #     print(torch.nonzero(torch.logical_or(samples.done[:, i, 0], samples.truncated[:, i, 0])).cpu().numpy().tolist())
             trainer_step_result.stats.update(
                 {
                     "step": trainer_step_result.step,
                     "timesteps": timesteps,
-                    "mean_return": torch.mean(torch.tensor(episode_return_buffer)),
-                    "mean_length": torch.mean(torch.tensor(episode_length_buffer)),
+                    "mean_return": torch.mean(torch.tensor(episode_return_buffer)).item(),
+                    "mean_length": torch.mean(torch.tensor(episode_length_buffer)).item(),
                 }
             )
             wandb.log(trainer_step_result.stats)
+
+        if timesteps % log_timesteps == 0:
             logging_str = get_logging_str_from_dict(trainer_step_result.stats)
             print(logging_str)
-
-            pbar.update(log_timesteps)
-            pbar.set_description(
-                f"step: {timesteps}, mean_return: {torch.mean(torch.tensor(episode_return_buffer)):.4f}, mean_length: {torch.mean(torch.tensor(episode_length_buffer)):.4f}"
-            )
-
             # gym_eval_policy(env_name, policy, timesteps // num_steps_per_env)
 
             # record stats

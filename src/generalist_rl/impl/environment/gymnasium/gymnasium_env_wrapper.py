@@ -52,7 +52,7 @@ class GymEnv(Environment):
         obs, reward, done, truncation, info = self._env.step(action_np)
         return EnvStepResult(
             obs=self.__get_obs_dict(obs), 
-            reward=torch.tensor(reward, device=self.device).unsqueeze(-1), 
+            reward=torch.tensor(reward, device=self.device, dtype=torch.float32).unsqueeze(-1), 
             done=torch.tensor(done, device=self.device).unsqueeze(-1), 
             truncated=torch.tensor(truncation, device=self.device).unsqueeze(-1), 
             info=info)
